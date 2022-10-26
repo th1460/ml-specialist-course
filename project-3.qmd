@@ -1,0 +1,226 @@
+---
+title: "Classify"
+author: "Thiago Pires"
+date: "2022-10-26"
+format: pdf
+toc: true
+toc-depth: 4
+execute: 
+    warning: false
+    echo: true
+---
+
+## Introduction
+
+This project presents some analyzes to predict if a passenger given some  features could survive or not. I will use data of the famous ship [Titanic](https://en.wikipedia.org/wiki/RMS_Titanic) that tragically wrecked in 1912.
+
+## Read data
+
+```{r}
+train <- titanic::titanic_train
+```
+
+## About the attributes
+
+The variables used are:
+
+- Sex: sex
+- Age: age
+- Pclass: Passenger Class
+- Survived: Passenger Survival Indicator
+
+## Initial plan for data exploration
+
+Univariate analysis to identify more important features to multiple model. I will use plots and supervised modeling in the analysis.
+
+## Manipulation (Actions taken for data cleaning and feature engineering)
+
+```{r}
+train <- train |>
+  dplyr::mutate(Survived = factor(Survived, labels = c("no", "yes")),
+         Pclass = factor(Pclass, labels = c("1st", "2nd", "3rd")),
+         Sex = factor(Sex))
+```
+
+## Univariate analysis
+
+My three hypothesis about this data are:
+
+- Relation between sex and survive
+- Relation between pclass and survive
+- Relation between age and survive
+
+### Ticket class (Pclass)
+
+There were more survivors in first class than in the second and third class.
+
+```{r}
+#| fig-cap: Percentual distribution of survivors according to ticket class 
+
+train |> 
+    ggplot2::ggplot(ggplot2::aes(Pclass, ..count../sum(..count..), fill = Survived)) + 
+    ggplot2::geom_bar(position = "fill") +
+    ggplot2::scale_y_continuous(labels = scales::percent) +
+    ggplot2::theme_light() +
+    ggplot2::labs(x = "Ticket class", y = "", fill = "Survived")
+```
+
+### Sex
+
+There were more female survivors than male.
+
+```{r}
+#| fig-cap: Percentual distribution of survivors according to sex
+
+train |> 
+    ggplot2::ggplot(ggplot2::aes(Sex, ..count../sum(..count..), fill = Survived)) + 
+    ggplot2::geom_bar(position = "fill") +
+    ggplot2::scale_y_continuous(labels = scales::percent) +
+    ggplot2::theme_light() +
+    ggplot2::labs(x = "Sex", y = "", fill = "Survived")
+```
+
+### Interaction between Sex and Ticket Class
+
+There is a diffrence between sex survived and classes. More woman survived in 1st class (about 100%!) than in 3rd class (about 50%).
+
+```{r}
+#| fig-cap: Percentual distribution of survivors according to sex and pclass
+
+train |>
+    ggplot2::ggplot() +
+    ggplot2::aes(Sex, ..count../sum(..count..), 
+        group = Survived, 
+        fill = Survived) +
+    ggplot2::geom_bar(position = "fill") +
+    ggplot2::facet_grid(~Pclass) +
+    ggplot2::scale_y_continuous(labels = scales::percent) +
+    ggplot2::labs(x = "Sex", y = "", fill = "Survived") +
+    ggplot2::theme_light()
+```
+
+### Age
+
+There is no difference between the distribution of age according to survived status.
+
+```{r}
+#| fig-cap: Distribution of age according to survived status
+
+train |>
+  ggplot2::ggplot(ggplot2::aes(Survived, Age)) + ggplot2::geom_boxplot() +
+  ggplot2::theme_light()
+```
+
+## Modeling
+
+Three approaches to modeling:
+
+- Logistic regression
+- Logistic regression with interaction effect
+- Random forest
+
+### Split in train and test
+
+```{r}
+library(tidymodels)
+
+data_split <- 
+    initial_split(train, prop = 3/4)
+
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+```
+
+### Logistic regression
+
+```{r}
+#| tbl-cap: Logistic regression
+
+lr_mod <- 
+    logistic_reg() |>  
+    set_engine("glm")
+
+lr_fit <- 
+    lr_mod |>  
+    fit(Survived ~ Sex + Pclass, data = train_data)
+
+lr_fit |> 
+    broom::tidy() |> knitr::kable()
+```
+
+#### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+measure <- function(data) {
+    
+    data |> 
+        accuracy(truth = Survived, .pred_class) |>  
+        
+        bind_rows(
+            data |>  
+                f_meas(truth = Survived, .pred_class))
+}
+
+predict(lr_fit, test_data) |> 
+    dplyr::bind_cols(predict(lr_fit, 
+                      test_data, type = "prob")) |> 
+    dplyr::bind_cols(test_data |>  
+    dplyr::select(Survived)) |> 
+    measure() |> 
+    knitr::kable()
+```
+
+### Logistic regression with interaction effect
+
+```{r}
+#| tbl-cap: Logistic regression with interaction effect
+
+lr_fit_i <- 
+    lr_mod |>  
+    fit(Survived ~ Sex * Pclass, data = train_data)
+
+lr_fit_i |> 
+    broom::tidy() |> knitr::kable()
+```
+
+#### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+predict(lr_fit_i, test_data) |> 
+    dplyr::bind_cols(predict(lr_fit_i, 
+                      test_data, type = "prob")) |> 
+    dplyr::bind_cols(test_data |>  
+    dplyr::select(Survived)) |> 
+    measure() |> 
+    knitr::kable()
+```
+
+### Random forest
+
+```{r}
+rf <- 
+    rand_forest(mode = "classification", mtry = 2, trees = 100) |>  
+    fit(Survived ~ Sex + Pclass, data = train_data)
+```
+
+#### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+predict(rf, test_data) |> 
+    dplyr::bind_cols(predict(rf, 
+                      test_data, type = "prob")) |> 
+    dplyr::bind_cols(test_data |>  
+    dplyr::select(Survived)) |> 
+    measure() |> 
+    knitr::kable()
+```
+
+## Comparing models
+
+The three models get close metrics. But the logistic regression with iteraction get a $f1_{score}$ better than the others models. The results showed that the class and sex are the main effects on the target. Women and class (1st) have more effect in survive.

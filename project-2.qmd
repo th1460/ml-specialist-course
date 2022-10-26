@@ -1,0 +1,296 @@
+---
+title: "Linear Regression"
+author: "Thiago Pires"
+date: "2022-10-25"
+format: pdf
+toc: true
+toc-depth: 4
+execute: 
+    warning: false
+    echo: true
+---
+
+## Introduction
+
+This paper will analyse the main factors associated to car consumption (Miles/(US) gallon). Therefore I will focus on the model interpretability.
+
+## Methods
+
+I will use to analyse the R language and the library `tidymodels` to modeling. 
+
+### Dataset
+
+The data was extracted from the 1974 Motor Trend US magazine, and comprises fuel consumption and 10 aspects of automobile design and performance for 32 automobiles (1973--74 models). 
+
+| Variable | Description                     |
+|----------|:--------------------------------|
+| mpg      | Miles/(US) gallon               |
+| cyl      | Number of cylinders             |
+| disp     | Displacement (cu.in.)           |
+| hp       | Gross horsepower                |
+| drat     | Rear axle ratio                 |
+| wt       | Weight (lb/1000)                |
+| qsec     | 1/4 mile time                   |
+| vs       | V/S                             |
+| am       | Transmission (automatic/manual) |
+| gear     | Number of forward gears         |
+| carb     | Number of carburetors           |
+: Variable description
+
+## Results
+
+### Exploratory analysis
+
+Set the types of the variables
+
+```{r}
+mtcars <- mtcars |> 
+    dplyr::mutate(
+        vs = factor(vs, labels = c("V", "S")),
+        am = factor(am, labels = c("automatic", "manual")),
+        cyl = ordered(cyl),
+        gear = ordered(gear),
+        carb = ordered(carb)
+        )
+```
+
+##### Summary of quantitative variables
+
+```{r}
+#| tbl-cap: Summary
+
+describe <- function(data, x) {
+    table <- data |> 
+        dplyr::summarise(
+            Min = min({{x}}),
+            Max = max({{x}}),
+            Mean = mean({{x}}),
+            Median = median({{x}}),
+            SD = sd({{x}}),
+            IQR = IQR({{x}}),
+            N = dplyr::n()
+        )
+
+        dplyr::tibble(Variable = dplyr::quo_name(dplyr::quo({{x}}))) |> 
+            dplyr::bind_cols(table)
+}
+
+c("mpg", "disp", "hp", "drat", "wt", "qsec") |>
+    purrr::map_dfr(~ describe(mtcars, !! rlang::sym(.x))) |>
+    knitr::kable()
+```
+
+#### Frequency to categorical variables
+
+The variable `carb` there are categories (6 and 8) with little counts, so in the next steps they should be aggregated in other classes.
+
+```{r}
+#| tbl-cap: Frequency
+
+freq <- function(data, x) {
+
+  table <-
+    data |>
+    dplyr::filter(!is.na({{x}})) |>
+    dplyr::count({{x}}) |>
+    dplyr::mutate(`%` = round(n/sum(n, na.rm = TRUE) * 100, 2)) |>
+    dplyr::rename(Levels = {{x}}, N = n)
+
+  dplyr::tibble(Variable = dplyr::quo_name(dplyr::quo({{x}}))) |>
+    dplyr::bind_rows(dplyr::tibble(Variable = rep("", nrow(table) - 1))) |> 
+    dplyr::bind_cols(table) |>
+    dplyr::mutate(Variable = ifelse(is.na(Variable), "", Variable),
+    Levels = as.character(Levels))
+
+}
+
+c("cyl", "vs", "am", "gear", "carb") |>
+    purrr::map_dfr(~ freq(mtcars, !! rlang::sym(.x))) |>
+    knitr::kable()
+```
+
+#### Normality test
+
+The outcome that will be used in the model (`mpg`) has the nomal distribution by the shapiro test (p-value > 0.05).
+
+```{r}
+#| tbl-cap: Normality test
+
+mtcars$mpg |> 
+    shapiro.test() |> 
+    broom::tidy() |>
+    knitr::kable()
+```
+
+
+### Modeling
+
+#### Split in train and test
+
+```{r}
+library(tidymodels)
+set.seed(555)
+
+data_split <- 
+    initial_split(mtcars, prop = 3/4)
+
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+```
+
+In the next sections we will see the process to fit three proposed models:
+
+- Linear model
+- Linear model with polynomial effect
+- Linear model with lasso regularization
+
+#### Fit linear model
+
+```{r}
+#| tbl-cap: Linear model
+
+linear_mod <- 
+    linear_reg() |>
+    set_engine("lm") |>
+    set_mode("regression")
+
+mtcars_rec <- recipe(mpg ~ ., data = train_data)
+
+mtcars_rec <- 
+    mtcars_rec |> 
+    step_other(carb) |>
+    step_dummy(all_nominal_predictors())
+
+mtcars_rec <- 
+    prep(mtcars_rec, training = train_data)
+
+mtcars_work <- workflow() |>
+    add_model(linear_mod) |>
+    add_recipe(mtcars_rec)
+
+linear_fit <- mtcars_work |>
+    fit(data = train_data)
+
+linear_fit |> 
+    broom::tidy() |> knitr::kable()
+```
+
+##### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+linear_test_results <- 
+    predict(linear_fit, new_data = test_data) |> 
+    dplyr::bind_cols(test_data)
+
+rmse(linear_test_results, 
+     truth = mpg,
+     estimate = .pred) |>
+     knitr::kable()
+```
+
+#### Fit linear model with polynomial effects
+
+```{r}
+#| tbl-cap: Linear model with polynomial effects
+
+mtcars_rec_poly <- 
+    mtcars_rec |> 
+    step_poly(disp, hp, drat, wt, qsec)
+
+mtcars_rec_poly <- 
+    prep(mtcars_rec_poly, training = train_data)
+
+mtcars_work_poly <- workflow() |>
+    add_model(linear_mod) |>
+    add_recipe(mtcars_rec_poly)
+
+linear_fit_poly <- mtcars_work_poly |>
+    fit(data = train_data)
+
+linear_fit_poly |> 
+    broom::tidy() |> knitr::kable()
+```
+
+##### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+linear_test_results_poly <- 
+    predict(linear_fit_poly, new_data = test_data) |> 
+    dplyr::bind_cols(test_data)
+
+rmse(linear_test_results_poly, 
+     truth = mpg,
+     estimate = .pred) |>
+     knitr::kable()
+```
+
+#### Fit linear model with lasso
+
+```{r}
+#| tbl-cap: Linear model with lasso
+
+linear_mod_lasso <- 
+    linear_reg(penalty = 0.1, mixture = 1) |>
+    set_engine("glmnet")
+
+mtcars_work_lasso <- workflow() |>
+    add_model(linear_mod_lasso) |>
+    add_recipe(mtcars_rec)
+
+linear_fit_lasso <- mtcars_work_lasso |>
+    fit(data = train_data)
+
+linear_fit_lasso |> 
+    broom::tidy() |> knitr::kable()
+```
+
+##### Evaluation
+
+```{r}
+#| tbl-cap: Evaluation
+
+linear_test_results_lasso <- 
+    predict(linear_fit_lasso, new_data = test_data) |> 
+    dplyr::bind_cols(test_data)
+
+rmse(linear_test_results_lasso, 
+     truth = mpg,
+     estimate = .pred) |>
+     knitr::kable()
+```
+
+### Comparing models
+
+Based on `rmse` the best model was the linear model with lasso. The variables with greater effect on the consumption was transmission manual, two carborators compared with one, straight engine compared with v engine, 4 cyliders decrease consuption when compared with 8 cyliders.
+
+```{r}
+#| tbl-cap: Comparing models
+
+evaluate <- function(x) {
+   rmse(x, 
+     truth = mpg,
+     estimate = .pred) 
+}
+
+metrics <- 
+  purrr::map_dfr(list(linear_test_results,
+  linear_test_results_poly,
+  linear_test_results_lasso), evaluate)
+
+dplyr::tibble(models = c("linear", "poly", "lasso")) |> 
+    dplyr::bind_cols(metrics) |>
+    knitr::kable()
+```
+
+## Discussion
+
+Next steps:
+
+- Test others feature engineering
+- Test others model approaches: bayesian approaches for instance
+- Use grid search
+
