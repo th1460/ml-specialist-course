@@ -224,3 +224,8 @@ predict(rf, test_data) |>
 ## Comparing models
 
 The three models get close metrics. But the logistic regression with iteraction get a $f1_{score}$ better than the others models. The results showed that the class and sex are the main effects on the target. Women and class (1st) have more effect in survive.
+
+## Next steps
+
+- Use grid search
+- Use ensemble
